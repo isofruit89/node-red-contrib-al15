@@ -37,6 +37,10 @@
     .al15-sel input.al15-dup { border-color: var(--red-ui-form-input-border-error-color, #d6615f) !important; }
     .al15-missing { color: #c77c00; }
     .al15-empty { padding: 8px; font-size: 12px; color: var(--red-ui-secondary-text-color, #888); }
+    .al15-example { font-size: 12px; }
+    .al15-example pre { margin: 4px 0; padding: 6px 8px; white-space: pre-wrap; word-break: break-all; font-size: 12px; border: 1px solid var(--red-ui-secondary-border-color, #ddd); border-radius: 4px; background: var(--red-ui-tertiary-background, #f7f7f7); }
+    .al15-example ul { margin: 2px 0 0 18px; padding: 0; color: var(--red-ui-secondary-text-color, #666); }
+    .al15-example code { font-size: 11px; }
 </style>
 
 <script type="text/javascript">
@@ -61,6 +65,39 @@
     function displayName(i) { return i.nested && i.parent ? `${i.parent} › ${i.label}` : i.label; }
     function portOf(path) { const m = String(path || "").match(/^\/iolinkmaster\/port\[(\d+)\]/); return m ? Number(m[1]) : null; }
     function typeOf(i) { const f = i.format || {}; return f.type ? (f.encoding && f.encoding !== f.type ? `${f.type}:${f.encoding}` : f.type) : ""; }
+    /* ---------- payload example for write nodes (mirrors validateWrite in lib/model.js) ---------- */
+    /** { value, hint } – an example value and a short description of what is accepted */
+    function exampleFor(i) {
+        if (!i) return { value: 0, hint: "unknown format (data point not in the loaded model)" };
+        const f = i.format || {};
+        const type = String(f.type || "").toLowerCase(), enc = String(f.encoding || "").toLowerCase();
+        const val = f.valuation || {};
+        const num = s => (s !== "" && Number.isFinite(Number(s)) ? Number(s) : s);
+        if (val.valuelist && typeof val.valuelist === "object") {
+            const keys = Object.keys(val.valuelist);
+            return { value: num(keys[0]), hint: `one of ${keys.slice(0, 8).map(k => `${k} (${val.valuelist[k]})`).join(", ")}${keys.length > 8 ? ", …" : ""} – key or text` };
+        }
+        const singles = Array.isArray(val.single_values) ? val.single_values : null;
+        const ranges = Array.isArray(val.value_ranges) ? val.value_ranges : null;
+        const allowed = [...(singles || []).slice(0, 8).map(x => (x.text !== undefined ? `${x.value} (${x.text})` : String(x.value))),
+            ...(ranges || []).map(r => `${r.lower_value}…${r.upper_value}`)].join(", ");
+        const isInt = enc === "integer" || /^u?int\d*$/.test(enc);
+        if (type === "number" || isInt || enc === "float" || enc === "double") {
+            let v = singles && singles.length ? num(singles[0].value) : ranges && ranges.length ? Number(ranges[0].lower_value) : val.min !== undefined ? Number(val.min) : 0;
+            if (!Number.isFinite(v)) v = 0;
+            const range = val.min !== undefined || val.max !== undefined ? ` ${val.min ?? "…"}…${val.max ?? "…"}` : "";
+            return { value: v, hint: `${isInt ? "integer" : "number"}${enc && enc !== "integer" ? ` (${enc})` : ""}${range}${allowed ? ` – allowed: ${allowed}` : ""}` };
+        }
+        if (type === "boolean") return { value: true, hint: "boolean: true / false (also 1 / 0, \"true\" / \"false\")" };
+        if (enc === "hexstring") return { value: "0000", hint: "hex string, even number of digits (e.g. \"00FF\", optional 0x prefix)" };
+        if (type === "string") {
+            const v = singles && singles.length ? String(singles[0].value) : "text";
+            const len = val.maxlength !== undefined ? ` (max. ${val.maxlength} characters)` : "";
+            return { value: v, hint: `string${len}${allowed ? ` – allowed: ${allowed}` : ""}` };
+        }
+        return { value: 0, hint: typeOf(i) || "any" };
+    }
+
     function loadState() { try { return JSON.parse(localStorage.getItem(STATE_KEY)) || {}; } catch (_) { return {}; } }
     function saveState(s) { try { localStorage.setItem(STATE_KEY, JSON.stringify(s)); } catch (_) { /* ignore */ } }
 
@@ -89,7 +126,8 @@
             <div class="al15-browser"></div>
             <div class="al15-info"><span class="al15-status"></span><span class="al15-count"></span></div>
             <div class="al15-head"><span>Selected data <span class="al15-selcount"></span></span><a href="#" class="al15-clear">remove all</a></div>
-            <ol class="al15-list"></ol>`);
+            <ol class="al15-list"></ol>
+            ${opts.example ? `<div class="al15-example"></div>` : ""}`);
 
         const $area = $root.find(".al15-area"), $port = $root.find(".al15-port"), $cat = $root.find(".al15-cat");
         const $q = $root.find(".al15-q"), $det = $root.find(".al15-det"), $browser = $root.find(".al15-browser");
@@ -126,7 +164,31 @@
             while (used.has(n)) n = `${base}_${k++}`;
             return n;
         }
+        /** shows the expected msg.payload for the selected targets (write nodes only) */
+        function updateExample() {
+            if (!opts.example) return;
+            const $ex = $root.find(".al15-example");
+            const rows = [];
+            $list.editableList("items").each(function () {
+                const p = $(this).data("point");
+                const name = ($(this).find(".al15-alias").val() || "").trim() || p.label || p.path.split("/").pop();
+                rows.push(Object.assign({ name, path: p.path }, exampleFor(index.get(p.path))));
+            });
+            if (!rows.length) {
+                $ex.html(`<b>msg.payload</b><div class="al15-empty">Select targets above – the expected payload is shown here. Without targets the node writes <code>msg.payload</code> to <code>msg.path</code>.</div>`);
+                return;
+            }
+            const obj = {};
+            rows.forEach(r => { obj[r.name] = r.value; });
+            let html = `<b>Example msg.payload</b><pre>${esc(JSON.stringify(obj, null, 2))}</pre>`;
+            if (rows.length === 1) html += `<div>or the plain value: <code>${esc(JSON.stringify(rows[0].value))}</code></div>`;
+            else html += `<div>Only the contained names are written (in the order of the list), e.g. <code>${esc(JSON.stringify({ [rows[0].name]: rows[0].value }))}</code>.</div>`;
+            html += `<ul>${rows.map(r => `<li><code>${esc(r.name)}</code>: ${esc(r.hint)}</li>`).join("")}</ul>`;
+            $ex.html(html);
+        }
+
         function updateCount() {
+            updateExample();
             const n = $list.editableList("length");
             $root.find(".al15-selcount").text(n ? `(${n})` : "");
             $root.find(".al15-clear").toggle(n > 0);
@@ -150,7 +212,7 @@
                     .find(".al15-name").text(p.label || p.path.split("/").pop()).end()
                     .find(".al15-sub > span").text(p.path);
                 $(`<input type="text" class="al15-alias" placeholder="name in msg.name">`).val(p.name || p.label).appendTo(w)
-                    .on("input", checkDuplicates);
+                    .on("input", function () { checkDuplicates(); updateExample(); });
                 if (opts.input) {
                     const o = $(`<div class="al15-opts">`).appendTo(w);
                     $(`<label title="Polling interval in ms, at least ${MIN_INTERVAL} ms">Interval <input type="number" class="al15-iv" min="${MIN_INTERVAL}" step="1" placeholder="${DEFAULT_INTERVAL}"> ms</label>`).appendTo(o)
@@ -162,7 +224,7 @@
                 if (model.length && !item) row.find(".al15-name").addClass("al15-missing").attr("title", "Not found in the current IoT-Core model");
             },
             removeItem: function () { render(); updateCount(); checkDuplicates(); },
-            sortItems: function () { /* order is kept on save */ }
+            sortItems: function () { updateExample(); /* order is kept on save */ }
         });
         (opts.points || []).forEach(p => $list.editableList("addItem", Object.assign({}, p)));
         updateCount();
@@ -302,6 +364,7 @@
                     const ok = index.has($(this).data("point").path);
                     $(this).find(".al15-name").first().toggleClass("al15-missing", !ok).attr("title", ok ? "" : "Not found in the current IoT-Core model");
                 });
+                updateExample(); // formats are known now
             }).fail(x => {
                 if (seq !== loadSeq) return;
                 model = []; index = new Map();

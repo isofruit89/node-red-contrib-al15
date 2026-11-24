@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+* **AL15 out: payload example in the editor.** Below the selected targets the dialog shows an example `msg.payload`
+  built from the names and the IoT-Core formats, plus the accepted format of each target (boolean, range, allowed values, hex string …).
+* AL15 out help: payload examples (one target, several targets, partial object, path as key, dynamic `msg.path`) and value formats.
+
 ## 0.4.0
 
 * **AL15 in: free polling interval** per data point in ms (any value ≥ 20 ms, default 500 ms) instead of the classes fast / normal / slow.

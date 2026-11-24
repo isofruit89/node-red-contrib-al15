@@ -22,7 +22,7 @@ RED.nodes.registerType("al15-output", {
     labelStyle: function () { return this.name ? "node_label_italic" : ""; },
     oneditprepare: function () {
         this._picker = AL15Editor.createPicker($("#al15-out-picker"), {
-            mode: "write", input: false, points: this.points || [], connection: $("#node-input-connection")
+            mode: "write", input: false, example: true, points: this.points || [], connection: $("#node-input-connection")
         });
     },
     oneditsave: function () {
@@ -53,6 +53,27 @@ RED.nodes.registerType("al15-output", {
         <dt class="optional">path <span class="property-type">string</span></dt><dd>write <code>msg.payload</code> to this path instead (dynamic target)</dd>
     </dl>
     <p>Before writing, existence, writability, data type, value range and allowed values are checked against the IoT-Core model.</p>
+    <p>The edit dialog shows an <b>Example msg.payload</b> for the selected targets, with the accepted format of each one.</p>
+    <h3>Payload examples</h3>
+    <p><b>One target</b> (e.g. named <code>LED</code>) – both are equivalent:</p>
+    <pre>msg.payload = true;
+msg.payload = { "LED": true };</pre>
+    <p><b>Several targets</b> (e.g. <code>LED-a</code>, <code>LED-b</code>, <code>Mode</code>) – an object keyed by the names from the node.
+       Missing names are not written, so a partial object is fine:</p>
+    <pre>msg.payload = { "LED-a": 1, "LED-b": 0, "Mode": 2 };
+msg.payload = { "LED-b": 1 };   // writes only LED-b</pre>
+    <p>Instead of the name the full IoT-Core path may be used as key, e.g. <code>{ "/iolinkmaster/port[4]/pdout": "0100" }</code>.</p>
+    <p><b>Dynamic target</b> (no target selected or overriding the selection):</p>
+    <pre>msg.path    = "/iolinkmaster/port[4]/pdout";
+msg.payload = "0100";</pre>
+    <h3>Value formats</h3>
+    <dl class="message-properties">
+        <dt>boolean</dt><dd><code>true</code> / <code>false</code>, also <code>1</code> / <code>0</code> or <code>"true"</code> / <code>"false"</code></dd>
+        <dt>number / integer</dt><dd>a number (numeric strings are converted); min/max and allowed ranges of the model are checked</dd>
+        <dt>value list / single values</dt><dd>the value or its text, e.g. <code>1</code> or <code>"On"</code></dd>
+        <dt>hex string</dt><dd>even number of hex digits, e.g. <code>"00FF"</code> (optional <code>0x</code>, spaces ignored) – used for raw <code>pdout</code></dd>
+        <dt>string</dt><dd>text; length limits and allowed values of the model are checked</dd>
+    </dl>
     <h3>Outputs</h3>
     <p><code>msg.payload</code> is a result object (or an array for several targets):</p>
     <dl class="message-properties">
