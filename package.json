@@ -1,0 +1,37 @@
+{
+  "name": "node-red-contrib-al15",
+  "version": "0.4.0",
+  "description": "Node-RED nodes for local IoT-Core access on ifm AL1590 / AL1591: change-based input, on-demand read and validated write with a shared RAM cache.",
+  "keywords": [
+    "node-red",
+    "ifm",
+    "AL1590",
+    "AL1591",
+    "IO-Link",
+    "IoT-Core"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node test/run.js"
+  },
+  "node-red": {
+    "version": ">=3.0.0",
+    "nodes": {
+      "al15-config": "nodes/al15-config.js",
+      "al15-input": "nodes/al15-input.js",
+      "al15-get-data": "nodes/al15-get-data.js",
+      "al15-output": "nodes/al15-output.js"
+    }
+  },
+  "files": [
+    "nodes",
+    "lib",
+    "examples",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ]
+}

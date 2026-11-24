@@ -1,0 +1,393 @@
+<!-- ===================================================================== -->
+<!-- AL15 configuration node + shared data point picker used by all nodes -->
+<!-- ===================================================================== -->
+<style>
+    .al15-picker { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+    .al15-bar { display: flex; gap: 6px; align-items: center; }
+    .al15-bar select, .al15-bar input[type=text] { flex: 1 1 0; min-width: 0; width: auto !important; margin: 0; }
+    .al15-bar select.al15-port { flex: 0 0 90px; }
+    .al15-bar .al15-details { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; margin: 0; width: auto; white-space: nowrap; cursor: pointer; font-size: 12px; }
+    .al15-bar .al15-details input { margin: 0; width: auto; }
+    .al15-browser { height: 210px; min-height: 90px; resize: vertical; overflow-y: auto; border: 1px solid var(--red-ui-form-input-border-color, #ccc); border-radius: 4px; background: var(--red-ui-form-input-background, #fff); }
+    .al15-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--red-ui-secondary-border-color, #eee); cursor: pointer; user-select: none; }
+    .al15-row:hover { background: var(--red-ui-list-item-background-hover, #f3f3f3); }
+    .al15-row.al15-on { background: var(--red-ui-list-item-background-selected, #edf4ff); }
+    .al15-row > i { width: 14px; text-align: center; color: var(--red-ui-secondary-text-color, #888); }
+    .al15-row.al15-on > i { color: #f58220; }
+    .al15-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+    .al15-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .al15-sub { font-size: 11px; color: var(--red-ui-secondary-text-color, #888); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+    .al15-sub > span { direction: ltr; unicode-bidi: bidi-override; }
+    .al15-chip { flex: 0 0 auto; font-size: 10px; line-height: 16px; padding: 0 5px; border-radius: 8px; background: var(--red-ui-tertiary-background, #e8eef4); color: var(--red-ui-secondary-text-color, #555); white-space: nowrap; }
+    .al15-chip.al15-w { background: #fde3cf; color: #9a4a08; }
+    .al15-msg { padding: 10px; color: var(--red-ui-secondary-text-color, #777); font-size: 12px; }
+    .al15-msg.al15-err { color: var(--red-ui-text-color-error, #c00); }
+    .al15-info { display: flex; justify-content: space-between; font-size: 11px; color: var(--red-ui-secondary-text-color, #888); }
+    .al15-head { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; font-weight: 600; }
+    .al15-head a { font-weight: normal; font-size: 12px; }
+    .al15-picker .red-ui-editableList-container { min-height: 40px; max-height: 320px; overflow-y: auto; }
+    .al15-picker .red-ui-editableList-item-content { width: auto; }
+    .al15-sel { display: grid; grid-template-columns: 52px minmax(0, 1fr) minmax(0, 1fr); gap: 4px 8px; align-items: center; padding-right: 4px; }
+    .al15-sel .al15-chip { justify-self: start; }
+    .al15-sel input, .al15-sel select { width: 100% !important; min-width: 0; box-sizing: border-box; margin: 0; height: 28px; }
+    .al15-sel .al15-opts { grid-column: 2 / 4; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+    .al15-sel .al15-opts label { display: flex; align-items: center; gap: 6px; width: auto; margin: 0; font-size: 12px; color: var(--red-ui-secondary-text-color, #777); }
+    .al15-sel .al15-opts label > select, .al15-sel .al15-opts label > input { flex: 1 1 0; }
+    .al15-sel .al15-opts label { white-space: nowrap; }
+    .al15-sel input.al15-dup { border-color: var(--red-ui-form-input-border-error-color, #d6615f) !important; }
+    .al15-missing { color: #c77c00; }
+    .al15-empty { padding: 8px; font-size: 12px; color: var(--red-ui-secondary-text-color, #888); }
+</style>
+
+<script type="text/javascript">
+(function () {
+    "use strict";
+    const AREAS = [["port", "Data per Port"], ["master", "IO-Link Master Data"], ["system", "System Data"], ["advanced", "Advanced (all)"]];
+    const CATS = [["pdin", "Process Data In"], ["pdout", "Process Data Out"], ["device", "Device / Identification"], ["param", "Parameters"], ["port", "Port configuration"], ["diag", "Diagnostics / Events"], ["all", "All port data"]];
+    const MIN_INTERVAL = 20, DEFAULT_INTERVAL = 500;
+    const LEGACY_IV = { fast: 20, normal: 500, slow: 1000 }; // interval classes of 0.3.x
+    /** interval in ms from a stored value (number, numeric string or legacy class), null if invalid */
+    function ivMs(v) {
+        if (v === undefined || v === null || v === "") return null;
+        if (LEGACY_IV[v]) return LEGACY_IV[v];
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.round(n) : null;
+    }
+    function ivValid(v) { const n = ivMs(v); return n !== null && n >= MIN_INTERVAL; }
+    const LIMIT = 250;
+    const STATE_KEY = "al15-picker-state";
+
+    function esc(s) { return $("<div>").text(s == null ? "" : String(s)).html(); }
+    function displayName(i) { return i.nested && i.parent ? `${i.parent} › ${i.label}` : i.label; }
+    function portOf(path) { const m = String(path || "").match(/^\/iolinkmaster\/port\[(\d+)\]/); return m ? Number(m[1]) : null; }
+    function typeOf(i) { const f = i.format || {}; return f.type ? (f.encoding && f.encoding !== f.type ? `${f.type}:${f.encoding}` : f.type) : ""; }
+    function loadState() { try { return JSON.parse(localStorage.getItem(STATE_KEY)) || {}; } catch (_) { return {}; } }
+    function saveState(s) { try { localStorage.setItem(STATE_KEY, JSON.stringify(s)); } catch (_) { /* ignore */ } }
+
+    /**
+     * Creates the data point picker inside `$root`.
+     * opts.mode:     "read" | "write"   (filters readable / writable points)
+     * opts.input:    true -> per point interval + deadband columns
+     * opts.points:   stored selection [{path,name,label,interval,deadband}]
+     * opts.connection: jQuery select of the config node
+     */
+    function createPicker($root, opts) {
+        const st = Object.assign({ area: "port", port: 1, cat: "pdin", details: false }, loadState());
+        let model = [], index = new Map(), loadSeq = 0;
+
+        $root.addClass("al15-picker").html(
+            `<div class="al15-bar">
+                <select class="al15-area">${AREAS.map(a => `<option value="${a[0]}">${a[1]}</option>`).join("")}</select>
+                <select class="al15-port"></select>
+                <select class="al15-cat">${CATS.map(a => `<option value="${a[0]}">${a[1]}</option>`).join("")}</select>
+            </div>
+            <div class="al15-bar">
+                <input type="text" class="al15-q" placeholder="Filter by name or path">
+                <label class="al15-details" title="Also show attributes such as unit or iodd_info"><input type="checkbox" class="al15-det"> Details</label>
+                <button type="button" class="red-ui-button al15-reload" title="Read the IoT-Core model again from the AL15"><i class="fa fa-refresh"></i></button>
+            </div>
+            <div class="al15-browser"></div>
+            <div class="al15-info"><span class="al15-status"></span><span class="al15-count"></span></div>
+            <div class="al15-head"><span>Selected data <span class="al15-selcount"></span></span><a href="#" class="al15-clear">remove all</a></div>
+            <ol class="al15-list"></ol>`);
+
+        const $area = $root.find(".al15-area"), $port = $root.find(".al15-port"), $cat = $root.find(".al15-cat");
+        const $q = $root.find(".al15-q"), $det = $root.find(".al15-det"), $browser = $root.find(".al15-browser");
+        const $list = $root.find(".al15-list");
+
+        $area.val(st.area);
+        $cat.val(st.cat);
+        $det.prop("checked", !!st.details);
+
+        /* ---------- selected list ---------- */
+        function selectedPaths() {
+            const s = new Set();
+            $list.editableList("items").each(function () { s.add($(this).data("point").path); });
+            return s;
+        }
+        function names(except) {
+            const s = new Set();
+            $list.editableList("items").each(function () { if (this !== except) s.add($(this).find(".al15-alias").val()); });
+            return s;
+        }
+        function checkDuplicates() {
+            const seen = new Map();
+            $list.find(".al15-alias").each(function () {
+                const v = $(this).val();
+                seen.set(v, (seen.get(v) || 0) + 1);
+            });
+            $list.find(".al15-alias").each(function () { $(this).toggleClass("al15-dup", !$(this).val() || seen.get($(this).val()) > 1); });
+        }
+        function uniqueName(i) {
+            const used = names(null);
+            let base = String(i.nested && i.parent ? `${i.parent}_${i.label}` : i.label).replace(/\s+/g, "_");
+            if (used.has(base) && i.port) base = `p${i.port}_${base}`;
+            let n = base, k = 2;
+            while (used.has(n)) n = `${base}_${k++}`;
+            return n;
+        }
+        function updateCount() {
+            const n = $list.editableList("length");
+            $root.find(".al15-selcount").text(n ? `(${n})` : "");
+            $root.find(".al15-clear").toggle(n > 0);
+            $root.find(".al15-empty").remove();
+            if (!n) $list.parent().append(`<div class="al15-empty">Nothing selected yet – click a data point above to add it.</div>`);
+        }
+
+        $list.editableList({
+            addButton: false,
+            removable: true,
+            sortable: true,
+            height: "auto",
+            scrollOnAdd: true,
+            addItem: function (row, idx, p) {
+                row.data("point", p).attr("title", p.path);
+                const item = index.get(p.path);
+                const port = p.port || portOf(p.path);
+                const w = $(`<div class="al15-sel">`).appendTo(row);
+                $(`<span class="al15-chip">`).text(port ? `Port ${port}` : (p.path.startsWith("/iolinkmaster") ? "Master" : "System")).appendTo(w);
+                $(`<div class="al15-txt"><span class="al15-name"></span><span class="al15-sub"><span></span></span></div>`).appendTo(w)
+                    .find(".al15-name").text(p.label || p.path.split("/").pop()).end()
+                    .find(".al15-sub > span").text(p.path);
+                $(`<input type="text" class="al15-alias" placeholder="name in msg.name">`).val(p.name || p.label).appendTo(w)
+                    .on("input", checkDuplicates);
+                if (opts.input) {
+                    const o = $(`<div class="al15-opts">`).appendTo(w);
+                    $(`<label title="Polling interval in ms, at least ${MIN_INTERVAL} ms">Interval <input type="number" class="al15-iv" min="${MIN_INTERVAL}" step="1" placeholder="${DEFAULT_INTERVAL}"> ms</label>`).appendTo(o)
+                        .find("input").val(ivMs(p.interval) ?? DEFAULT_INTERVAL)
+                        .on("input", function () { $(this).toggleClass("al15-dup", !ivValid($(this).val())); }).trigger("input");
+                    $(`<label title="Numeric values: only report a change ≥ deadband (0 = every change)">Deadband <input type="number" class="al15-db" min="0" step="any" placeholder="0"></label>`).appendTo(o)
+                        .find("input").val(p.deadband || "");
+                }
+                if (model.length && !item) row.find(".al15-name").addClass("al15-missing").attr("title", "Not found in the current IoT-Core model");
+            },
+            removeItem: function () { render(); updateCount(); checkDuplicates(); },
+            sortItems: function () { /* order is kept on save */ }
+        });
+        (opts.points || []).forEach(p => $list.editableList("addItem", Object.assign({}, p)));
+        updateCount();
+        checkDuplicates();
+
+        function toggle(i) {
+            let found = null;
+            $list.editableList("items").each(function () { if ($(this).data("point").path === i.path) found = $(this); });
+            if (found) $list.editableList("removeItem", found.data("point"));
+            else {
+                $list.editableList("addItem", { path: i.path, label: displayName(i), port: i.port, name: uniqueName(i), interval: DEFAULT_INTERVAL, deadband: "" });
+                checkDuplicates();
+            }
+            updateCount();
+            render();
+        }
+
+        $root.find(".al15-clear").on("click", function (e) {
+            e.preventDefault();
+            $list.editableList("empty");
+            updateCount();
+            render();
+        });
+
+        /* ---------- browser ---------- */
+        function fillPorts() {
+            const ports = [...new Set(model.filter(i => i.port).map(i => i.port))].sort((a, b) => a - b);
+            const list = ports.length ? ports : [1, 2, 3, 4, 5, 6, 7, 8];
+            const cur = Number($port.val()) || Number(st.port); // keep the current choice on model reloads
+            $port.html(list.map(p => `<option value="${p}">Port ${p}</option>`).join(""));
+            $port.val(list.includes(cur) ? cur : list[0]);
+        }
+        fillPorts();
+
+        function filtered() {
+            const area = $area.val(), port = Number($port.val()), cat = $cat.val();
+            const q = $q.val().trim().toLowerCase().split(/\s+/).filter(Boolean);
+            const details = $det.is(":checked") || area === "advanced";
+            return model.filter(i => {
+                if (opts.mode === "write" ? !i.writable : !i.readable) return false;
+                if (!details && i.nested) return false;
+                if (area === "port") { if (i.port !== port || (cat !== "all" && i.cat !== cat)) return false; }
+                else if (area !== "advanced" && i.area !== area) return false;
+                if (q.length) { const hay = `${displayName(i)} ${i.path}`.toLowerCase(); return q.every(w => hay.includes(w)); }
+                return true;
+            });
+        }
+
+        function render() {
+            if (!model.length) return;
+            const sel = selectedPaths();
+            const area = $area.val();
+            const all = filtered(), shown = all.slice(0, LIMIT);
+            $browser.empty();
+            shown.forEach(i => {
+                const on = sel.has(i.path);
+                const sub = area === "advanced" || $q.val() ? i.path : (i.group || i.path);
+                const $r = $(`<div class="al15-row${on ? " al15-on" : ""}"><i class="fa ${on ? "fa-check-square" : "fa-plus"}"></i>
+                    <div class="al15-txt"><span class="al15-name"></span><span class="al15-sub"><span></span></span></div></div>`).appendTo($browser);
+                $r.attr("title", `${i.path}\n${on ? "Click to remove" : "Click to add"}`);
+                $r.find(".al15-name").text(displayName(i));
+                $r.find(".al15-sub > span").text(sub);
+                const t = typeOf(i);
+                if (t) $(`<span class="al15-chip">`).text(t).appendTo($r);
+                if (i.writable) $(`<span class="al15-chip al15-w">`).text(i.readable ? "R/W" : "W").appendTo($r);
+                $r.on("click", () => toggle(i));
+            });
+            if (!all.length) {
+                const portCount = model.filter(i => i.port === Number($port.val())).length;
+                $browser.html(`<div class="al15-msg">No ${opts.mode === "write" ? "writable" : "readable"} data points for this selection.` +
+                    (area === "port" ? `<br>Port ${esc($port.val())} has ${portCount} data points in total – try another category or “All port data”.` : "") + `</div>`);
+            }
+            $root.find(".al15-count").text(all.length > LIMIT ? `showing ${LIMIT} of ${all.length} – refine the filter` : `${all.length} shown`);
+        }
+
+        function persist() {
+            saveState({ area: $area.val(), port: Number($port.val()), cat: $cat.val(), details: $det.is(":checked") });
+        }
+        $area.on("change", function () {
+            const p = $(this).val() === "port";
+            $port.toggle(p); $cat.toggle(p);
+            persist(); render();
+        }).trigger("change");
+        $port.on("change", () => { persist(); render(); });
+        $cat.on("change", () => { persist(); render(); });
+        $det.on("change", () => { persist(); render(); });
+        let qt = null;
+        $q.on("input", () => { clearTimeout(qt); qt = setTimeout(render, 120); });
+
+        /**
+         * When an existing node is opened, show the area / port / category its selected
+         * points belong to instead of the last view used in any node (once per editor open).
+         * Mixed areas or ports keep the stored view.
+         */
+        let positioned = false;
+        function positionFromPoints() {
+            const sel = [...selectedPaths()].map(p => index.get(p)).filter(Boolean);
+            if (!sel.length) return;
+            const areas = new Set(sel.map(i => i.area));
+            if (areas.size !== 1) return;
+            const area = sel[0].area;
+            if (area === "port") {
+                const ports = new Set(sel.map(i => i.port)), cats = new Set(sel.map(i => i.cat));
+                if (ports.size !== 1) return;
+                $port.val(String(sel[0].port));
+                $cat.val(cats.size === 1 ? sel[0].cat : "all");
+                if (sel.some(i => i.nested)) $det.prop("checked", true);
+            }
+            $area.val(area);
+        }
+
+        /* ---------- model loading ---------- */
+        function load(force) {
+            const id = opts.connection.val();
+            const cfg = id && id !== "_ADD_" ? RED.nodes.node(id) : null;
+            if (!cfg) {
+                model = []; index = new Map();
+                $browser.html(`<div class="al15-msg">Select or create an AL15 configuration first.</div>`);
+                $root.find(".al15-status, .al15-count").text("");
+                return;
+            }
+            const seq = ++loadSeq;
+            $browser.html(`<div class="al15-msg"><i class="fa fa-spinner fa-spin"></i> ${force ? "Reading model from AL15…" : "Loading model…"}</div>`);
+            $root.find(".al15-reload").prop("disabled", true);
+            const q = $.param({ config: id, url: cfg.baseUrl || "", refresh: force ? "true" : "false" });
+            $.getJSON(`al15/model?${q}`).done(d => {
+                if (seq !== loadSeq) return;
+                model = d.items || [];
+                index = new Map(model.map(i => [i.path, i]));
+                const t = d.loadedAt ? new Date(d.loadedAt).toLocaleTimeString() : "";
+                $root.find(".al15-status").text(`${model.length} data points · model ${d.cached ? "cached" : "read"} ${t}`);
+                fillPorts();
+                if (!positioned) { positioned = true; positionFromPoints(); }
+                $area.trigger("change");
+                // refresh "missing" markers of selected rows
+                $list.editableList("items").each(function () {
+                    const ok = index.has($(this).data("point").path);
+                    $(this).find(".al15-name").first().toggleClass("al15-missing", !ok).attr("title", ok ? "" : "Not found in the current IoT-Core model");
+                });
+            }).fail(x => {
+                if (seq !== loadSeq) return;
+                model = []; index = new Map();
+                const err = (x.responseJSON && x.responseJSON.error) || x.statusText || "Could not load model";
+                $browser.html(`<div class="al15-msg al15-err"><i class="fa fa-exclamation-triangle"></i> ${esc(err)}<br>Already selected data points are kept.</div>`);
+                $root.find(".al15-status, .al15-count").text("");
+            }).always(() => { if (seq === loadSeq) $root.find(".al15-reload").prop("disabled", false); });
+        }
+        $root.find(".al15-reload").on("click", () => load(true));
+        opts.connection.on("change", () => load(false));
+        load(false);
+
+        return {
+            /** returns the selection for storing in the node */
+            value: function () {
+                const out = [];
+                $list.editableList("items").each(function () {
+                    const p = $(this).data("point");
+                    const r = { path: p.path, label: p.label || p.path.split("/").pop(), name: ($(this).find(".al15-alias").val() || "").trim() || p.label };
+                    if (opts.input) {
+                        const iv = ivMs($(this).find(".al15-iv").val());
+                        r.interval = iv === null ? DEFAULT_INTERVAL : Math.max(MIN_INTERVAL, iv);
+                        const db = Number($(this).find(".al15-db").val());
+                        r.deadband = Number.isFinite(db) && db > 0 ? db : 0;
+                    }
+                    out.push(r);
+                });
+                return out;
+            },
+            hasDuplicates: function () { checkDuplicates(); return $list.find(".al15-alias.al15-dup").length > 0; },
+            /** true if an interval field is empty or below the minimum */
+            hasInvalidIntervals: function () { let bad = false; $list.find(".al15-iv").each(function () { if (!ivValid($(this).val())) bad = true; }); return bad; }
+        };
+    }
+
+    /** migrates v0.2.x "selections" (alias) to "points" (name) */
+    function migrate(node) {
+        if ((!node.points || !node.points.length) && Array.isArray(node.selections) && node.selections.length) {
+            return node.selections.map(s => ({ path: s.path, label: s.label || s.path.split("/").pop(), name: s.alias || s.label }));
+        }
+        return node.points || [];
+    }
+
+    window.AL15Editor = { createPicker, migrate, ivValid, MIN_INTERVAL };
+
+    RED.nodes.registerType("al15-config", {
+        category: "config",
+        defaults: {
+            name: { value: "" },
+            baseUrl: { value: "http://127.0.0.1:8090", required: true },
+            timeout: { value: 2000, validate: RED.validators.number() },
+            verifyTls: { value: false }
+        },
+        credentials: { username: { type: "text" }, password: { type: "password" } },
+        label: function () { return this.name || `AL15 ${this.baseUrl}`; },
+        oneditprepare: function () {
+            $("#al15-config-test").on("click", function () {
+                const $r = $("#al15-config-result").removeClass("al15-err").html(`<i class="fa fa-spinner fa-spin"></i> connecting…`);
+                $.getJSON(`al15/model?${$.param({ url: $("#node-config-input-baseUrl").val(), refresh: "true" })}`)
+                    .done(d => $r.text(`OK – ${d.items.length} data points found`))
+                    .fail(x => $r.addClass("al15-err").text((x.responseJSON && x.responseJSON.error) || "failed"));
+            });
+        }
+    });
+})();
+</script>
+
+<script type="text/html" data-template-name="al15-config">
+    <div class="form-row"><label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label><input type="text" id="node-config-input-name" placeholder="Local AL15"></div>
+    <div class="form-row"><label for="node-config-input-baseUrl"><i class="fa fa-globe"></i> Endpoint</label><input type="text" id="node-config-input-baseUrl" placeholder="http://127.0.0.1:8090"></div>
+    <div class="form-row"><label for="node-config-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label><input type="number" id="node-config-input-timeout" style="width:100px"> ms</div>
+    <div class="form-row"><label></label><button type="button" class="red-ui-button" id="al15-config-test"><i class="fa fa-plug"></i> Test connection</button> <span id="al15-config-result" class="al15-msg" style="padding:0 6px"></span></div>
+    <div class="form-tips">The palette runs on the AL15 itself. Keep the default for Firmware &gt;V1.9: <code>http://127.0.0.1:8090</code> (local IoT-Core, no TLS). User and password are only needed when IoT-Core access protection is enabled or FW &lt;V1.9</div>
+    <div class="form-row" style="margin-top:12px"><label for="node-config-input-username"><i class="fa fa-user"></i> User</label><input type="text" id="node-config-input-username"></div>
+    <div class="form-row"><label for="node-config-input-password"><i class="fa fa-lock"></i> Password</label><input type="password" id="node-config-input-password"></div>
+    <div class="form-row"><label for="node-config-input-verifyTls">Verify TLS</label><input type="checkbox" id="node-config-input-verifyTls" style="width:auto"> <span style="font-size:12px">only relevant for https endpoints</span></div>
+</script>
+
+<script type="text/html" data-help-name="al15-config">
+    <p>Shared connection to the IoT-Core of an ifm AL1590 / AL1591.</p>
+    <p>All AL15 nodes using this configuration share one RAM cache, one scheduler and one HTTP keep-alive connection. Identical data points are never polled twice.</p>
+    <h3>Properties</h3>
+    <dl class="message-properties">
+        <dt>Endpoint <span class="property-type">string</span></dt><dd>IoT-Core endpoint, default <code>http://127.0.0.1:8090</code>.</dd>
+        <dt>Timeout <span class="property-type">number</span></dt><dd>Timeout per request in ms.</dd>
+        <dt>User / Password</dt><dd>Only when IoT-Core access protection is active.</dd>
+    </dl>
+    <p>The IoT-Core model (gettree) is read when a node editor is opened and is kept in RAM. Use the <i class="fa fa-refresh"></i> button in the node editor after changing devices, IODDs or firmware.</p>
+</script>

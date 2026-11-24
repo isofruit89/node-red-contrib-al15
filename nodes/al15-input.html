@@ -1,0 +1,74 @@
+<script type="text/javascript">
+RED.nodes.registerType("al15-input", {
+    category: "AL15",
+    color: "#f58220",
+    defaults: {
+        name: { value: "" },
+        connection: { value: "", type: "al15-config", required: true },
+        points: { value: [], validate: function (v) { return Array.isArray(v) && v.length > 0 && v.every(p => !window.AL15Editor || AL15Editor.ivValid(p.interval)); } },
+        outputMode: { value: "single" },
+        topic: { value: "" }
+    },
+    inputs: 0,
+    outputs: 1,
+    icon: "font-awesome/fa-sign-in",
+    paletteLabel: "AL15 in",
+    label: function () {
+        const n = (this.points || []).length;
+        return this.name || (n === 1 ? this.points[0].name : `AL15 in${n ? ` (${n})` : ""}`);
+    },
+    labelStyle: function () { return this.name ? "node_label_italic" : ""; },
+    oneditprepare: function () {
+        this._picker = AL15Editor.createPicker($("#al15-input-picker"), {
+            mode: "read", input: true, points: AL15Editor.migrate(this), connection: $("#node-input-connection")
+        });
+        $("#node-input-outputMode").on("change", function () { $("#al15-input-topic-row").toggle($(this).val() === "collection"); }).trigger("change");
+    },
+    oneditsave: function () {
+        if (this._picker.hasInvalidIntervals()) RED.notify(`AL15 in: intervals must be at least ${AL15Editor.MIN_INTERVAL} ms – invalid values were corrected`, "warning");
+        this.points = this._picker.value();
+        if (this._picker.hasDuplicates()) RED.notify("AL15 in: some names are empty or used twice", "warning");
+        delete this._picker;
+    },
+    oneditcancel: function () { delete this._picker; }
+});
+</script>
+
+<script type="text/html" data-template-name="al15-input">
+    <div class="form-row"><label for="node-input-name"><i class="fa fa-tag"></i> Name</label><input type="text" id="node-input-name"></div>
+    <div class="form-row"><label for="node-input-connection"><i class="fa fa-cog"></i> AL15</label><input type="text" id="node-input-connection"></div>
+    <div id="al15-input-picker"></div>
+    <div class="form-row"><label for="node-input-outputMode"><i class="fa fa-sign-out"></i> Output</label>
+        <select id="node-input-outputMode">
+            <option value="single">One message per changed value</option>
+            <option value="collection">One collection message (all values)</option>
+        </select>
+    </div>
+    <div class="form-row" id="al15-input-topic-row"><label for="node-input-topic"><i class="fa fa-tasks"></i> Topic</label><input type="text" id="node-input-topic"></div>
+</script>
+
+<script type="text/html" data-help-name="al15-input">
+    <p>Sends IoT-Core values of the AL15 when they <b>change</b>.</p>
+    <p>The first successful read only initialises the cache and the comparison value – no message is sent for it.</p>
+    <h3>Data points</h3>
+    <p>Choose a category (Data per Port, IO-Link Master Data, System Data, Advanced) and click data points to add them.
+       Each value gets a free name (<code>msg.name</code>), a polling interval and an optional deadband.</p>
+    <dl class="message-properties">
+        <dt>Interval <span class="property-type">ms</span></dt><dd>Polling interval in milliseconds, any value of at least 20 ms (default 500 ms).
+            All points with the same interval (across all nodes of the same AL15 config) are read together with one <code>getdatamulti</code> request.
+            Each different interval is polled independently with its own request. A path selected with several intervals is read only at the shortest one;
+            the slower ones take its value from the cache. Use few distinct interval values to keep the number of requests low.</dd>
+        <dt>Deadband</dt><dd>Numeric values are only reported when they differ by at least this amount from the last reported value. Other data types are compared exactly.</dd>
+    </dl>
+    <h3>Outputs</h3>
+    <p><b>One message per changed value</b></p>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">any</span></dt><dd>value in its original data type</dd>
+        <dt>name <span class="property-type">string</span></dt><dd>name defined in the editor</dd>
+        <dt>path <span class="property-type">string</span></dt><dd>full IoT-Core path</dd>
+        <dt>timestamp <span class="property-type">string</span></dt><dd>UTC ISO 8601 time of the last successful read</dd>
+    </dl>
+    <p><b>Collection message</b>: <code>msg.payload</code> is an array of <code>{name, path, value, timestamp}</code> for all selected points, sent when at least one changed.</p>
+    <h3>Errors</h3>
+    <p>On communication errors the node status turns yellow (values stale) and one error is raised for a Catch node. When the connection recovers the status turns green again.</p>
+</script>

@@ -1,0 +1,78 @@
+<script type="text/javascript">
+RED.nodes.registerType("al15-get-data", {
+    category: "AL15",
+    color: "#f58220",
+    defaults: {
+        name: { value: "" },
+        connection: { value: "", type: "al15-config", required: true },
+        points: { value: [] },
+        selections: { value: [] }, // v0.2.x, migrated on edit
+        cacheMode: { value: "prefer-cache" },
+        maxAge: { value: 250, validate: RED.validators.number(true) },
+        outputMode: { value: "auto" }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "font-awesome/fa-download",
+    paletteLabel: "AL15 get",
+    label: function () {
+        const p = (this.points && this.points.length) ? this.points : (this.selections || []);
+        return this.name || (p.length === 1 ? (p[0].name || p[0].alias) : `AL15 get${p.length ? ` (${p.length})` : ""}`);
+    },
+    labelStyle: function () { return this.name ? "node_label_italic" : ""; },
+    oneditprepare: function () {
+        const legacy = { aliases: "object", paths: "object" };
+        if (legacy[this.outputMode]) $("#node-input-outputMode").val(legacy[this.outputMode]);
+        this._picker = AL15Editor.createPicker($("#al15-get-picker"), {
+            mode: "read", input: false, points: AL15Editor.migrate(this), connection: $("#node-input-connection")
+        });
+        $("#node-input-cacheMode").on("change", function () { $("#al15-get-age-row").toggle($(this).val() === "prefer-cache"); }).trigger("change");
+    },
+    oneditsave: function () {
+        this.points = this._picker.value();
+        this.selections = [];
+        if (this._picker.hasDuplicates()) RED.notify("AL15 get: some names are empty or used twice", "warning");
+        delete this._picker;
+    },
+    oneditcancel: function () { delete this._picker; }
+});
+</script>
+
+<script type="text/html" data-template-name="al15-get-data">
+    <div class="form-row"><label for="node-input-name"><i class="fa fa-tag"></i> Name</label><input type="text" id="node-input-name"></div>
+    <div class="form-row"><label for="node-input-connection"><i class="fa fa-cog"></i> AL15</label><input type="text" id="node-input-connection"></div>
+    <div id="al15-get-picker"></div>
+    <div class="form-row"><label for="node-input-cacheMode"><i class="fa fa-database"></i> Read</label>
+        <select id="node-input-cacheMode">
+            <option value="prefer-cache">Cache if fresh enough, otherwise live</option>
+            <option value="live">Always live</option>
+            <option value="cache-only">Cache only</option>
+        </select>
+    </div>
+    <div class="form-row" id="al15-get-age-row"><label for="node-input-maxAge"><i class="fa fa-clock-o"></i> Max. age</label><input type="number" id="node-input-maxAge" style="width:100px" min="0"> ms</div>
+    <div class="form-row"><label for="node-input-outputMode"><i class="fa fa-sign-out"></i> Output</label>
+        <select id="node-input-outputMode">
+            <option value="auto">Single value / array (ordered)</option>
+            <option value="array">Always array</option>
+            <option value="object">Object by name</option>
+        </select>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="al15-get-data">
+    <p>Reads IoT-Core values on demand. The RAM cache shared with <i>AL15 in</i> nodes is used whenever the cached value is young enough.</p>
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt class="optional">path <span class="property-type">string</span></dt><dd>read this path instead of the configured ones</dd>
+        <dt class="optional">paths <span class="property-type">array</span></dt><dd>list of paths or <code>{path, name}</code> objects</dd>
+        <dt class="optional">forceRefresh <span class="property-type">boolean</span></dt><dd><code>true</code> forces a live read</dd>
+        <dt class="optional">maxAge <span class="property-type">number</span></dt><dd>overrides the maximum cache age (ms)</dd>
+    </dl>
+    <h3>Outputs</h3>
+    <p><b>One data point</b>: <code>msg.payload</code> = value, plus <code>msg.name</code>, <code>msg.path</code>, <code>msg.timestamp</code>.</p>
+    <p><b>Several data points</b>: <code>msg.payload</code> is an array in the configured order with <code>{name, path, value, timestamp}</code>.
+       Entries that could not be read additionally contain <code>error</code>, <code>code</code> and <code>stale: true</code> (last valid value is kept).</p>
+    <p><b>Object by name</b>: <code>msg.payload = { name: value, … }</code>, failed entries are <code>null</code> (unless a last valid value exists) and are listed in <code>msg.errors</code>.</p>
+    <h3>Errors</h3>
+    <p>If the AL15 cannot be reached (or a single value fails) the error is reported to a Catch node.</p>
+</script>

@@ -1,0 +1,76 @@
+<script type="text/javascript">
+RED.nodes.registerType("al15-output", {
+    category: "AL15",
+    color: "#f58220",
+    defaults: {
+        name: { value: "" },
+        connection: { value: "", type: "al15-config", required: true },
+        points: { value: [] },
+        verify: { value: true },
+        timeout: { value: "", validate: RED.validators.number(true) },
+        pdoutInit: { value: true }
+    },
+    inputs: 1,
+    outputs: 1,
+    align: "right",
+    icon: "font-awesome/fa-upload",
+    paletteLabel: "AL15 out",
+    label: function () {
+        const n = (this.points || []).length;
+        return this.name || (n === 1 ? this.points[0].name : `AL15 out${n ? ` (${n})` : ""}`);
+    },
+    labelStyle: function () { return this.name ? "node_label_italic" : ""; },
+    oneditprepare: function () {
+        this._picker = AL15Editor.createPicker($("#al15-out-picker"), {
+            mode: "write", input: false, points: this.points || [], connection: $("#node-input-connection")
+        });
+    },
+    oneditsave: function () {
+        this.points = this._picker.value();
+        if (this._picker.hasDuplicates()) RED.notify("AL15 out: some names are empty or used twice", "warning");
+        delete this._picker;
+    },
+    oneditcancel: function () { delete this._picker; }
+});
+</script>
+
+<script type="text/html" data-template-name="al15-output">
+    <div class="form-row"><label for="node-input-name"><i class="fa fa-tag"></i> Name</label><input type="text" id="node-input-name"></div>
+    <div class="form-row"><label for="node-input-connection"><i class="fa fa-cog"></i> AL15</label><input type="text" id="node-input-connection"></div>
+    <div id="al15-out-picker"></div>
+    <div class="form-row"><label for="node-input-verify"><i class="fa fa-check"></i> Verify</label><input type="checkbox" id="node-input-verify" style="width:auto"> read back after writing (if readable)</div>
+    <div class="form-row"><label for="node-input-pdoutInit"><i class="fa fa-bolt"></i> PDOut</label><input type="checkbox" id="node-input-pdoutInit" style="width:auto"> initialise raw PDOut automatically (pdout_interpreted)</div>
+    <div class="form-row"><label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label><input type="number" id="node-input-timeout" style="width:100px" placeholder="config"> ms</div>
+</script>
+
+<script type="text/html" data-help-name="al15-output">
+    <p>Writes IoT-Core data points (configuration, device tags, outputs, PDOut …). Only data points that offer <code>setdata</code> are listed.</p>
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">any | object</span></dt>
+        <dd>An object <code>{ name: value, … }</code> writes exactly the contained targets (keys = names in the node, in configured order) – this works with one or several targets.
+            With exactly one target a plain value (e.g. <code>true</code>, <code>1</code>) is written to it.</dd>
+        <dt class="optional">path <span class="property-type">string</span></dt><dd>write <code>msg.payload</code> to this path instead (dynamic target)</dd>
+    </dl>
+    <p>Before writing, existence, writability, data type, value range and allowed values are checked against the IoT-Core model.</p>
+    <h3>Outputs</h3>
+    <p><code>msg.payload</code> is a result object (or an array for several targets):</p>
+    <dl class="message-properties">
+        <dt>outcome</dt><dd><code>OK</code>, <code>INVALID</code> (not sent), <code>REJECTED</code> (device refused), <code>FAILED</code> (not delivered), <code>OUTCOME_UNKNOWN</code> (timeout – may or may not have been executed)</dd>
+        <dt>transport</dt><dd><code>ok</code> / <code>timeout</code> / <code>failed</code></dd>
+        <dt>accepted</dt><dd>device accepted the request</dd>
+        <dt>effective</dt><dd>read back value equals written value (<code>null</code> if not verifiable)</dd>
+        <dt>persistence</dt><dd><code>reboot_required</code> if the device reports it, otherwise <code>null</code></dd>
+    </dl>
+    <h3>PDOut initialisation</h3>
+    <p>Elements below <code>pdout_interpreted</code> only change a part of the raw PDOut, and the device rejects them until the raw
+       <code>pdout</code> of the port has been written completely once (required again after every reboot).
+       With <b>initialise raw PDOut automatically</b> the node does this before the first interpreted write of a port:
+       the current raw PDOut is read and written back unchanged. Because the PDOut length depends on the IO-Link device
+       (1 to 32 bytes), it is determined per port: if the PDOut cannot be read (code 530 after a reboot), zeros are written with the length learned earlier,
+       the length from the IODD (<code>bit_length</code> in <code>pdout_interpreted/&lt;record&gt;/iodd_info</code>) or from the model; otherwise the lengths 1…32 bytes are tried with zeros until the device accepts one
+       (a write with a wrong length is rejected and has no effect). The learned length is reused after a reboot.
+       If an interpreted write is rejected later (e.g. after a reboot or re-plugging the device), the PDOut is initialised
+       again and the rejected write is repeated once. The result then contains <code>pdoutInit</code> and <code>retried: true</code>.</p>
+    <p>Apart from this case writes are never retried automatically. Every outcome other than <code>OK</code> is additionally reported to a Catch node.</p>
+</script>
