@@ -46,8 +46,15 @@
 <script type="text/javascript">
 (function () {
     "use strict";
-    const AREAS = [["port", "Data per Port"], ["master", "IO-Link Master Data"], ["system", "System Data"], ["advanced", "Advanced (all)"]];
-    const CATS = [["pdin", "Process Data In"], ["pdout", "Process Data Out"], ["device", "Device / Identification"], ["param", "Parameters"], ["port", "Port configuration"], ["diag", "Diagnostics / Events"], ["all", "All port data"]];
+    /* areas / categories – the assignment of paths is done in lib/categories.js */
+    const AREAS = [["status", "IO-Link Master Status"], ["master", "IO-Link Master Data"], ["port", "Data on Ports"]];
+    const CATS = {
+        master: [["tags", "AL15 Tags"], ["ident", "AL15 Ident"], ["data", "AL15 Data"], ["all", "Advanced (all)"]],
+        port: [["pdin", "Process Data IN"], ["pdout", "Process Data OUT"], ["diag", "Device Status / Diagnosis"], ["ident", "Device Identification"],
+            ["param", "Parameter"], ["config", "Port Configuration"], ["all", "All Port Data"]]
+    };
+    const DEFAULT_CAT = { master: "ident", port: "pdin" };
+    function hasOpt(list, v) { return list.some(x => x[0] === v); }
     const MIN_INTERVAL = 20, DEFAULT_INTERVAL = 500;
     const LEGACY_IV = { fast: 20, normal: 500, slow: 1000 }; // interval classes of 0.3.x
     /** interval in ms from a stored value (number, numeric string or legacy class), null if invalid */
@@ -109,14 +116,20 @@
      * opts.connection: jQuery select of the config node
      */
     function createPicker($root, opts) {
-        const st = Object.assign({ area: "port", port: 1, cat: "pdin", details: false }, loadState());
+        const st = Object.assign({ area: "port", port: 1, cat: "pdin", mcat: "ident", details: false }, loadState());
+        // views stored by 0.4.x ("system", "advanced", old category keys) fall back to the defaults
+        if (st.area === "advanced") st.mcat = "all";
+        if (!hasOpt(AREAS, st.area)) st.area = st.area === "advanced" || st.area === "system" ? "master" : "port";
+        if (!hasOpt(CATS.port, st.cat)) st.cat = DEFAULT_CAT.port;
+        if (!hasOpt(CATS.master, st.mcat)) st.mcat = DEFAULT_CAT.master;
+        const catOf = { port: st.cat, master: st.mcat }; // last category per area
         let model = [], index = new Map(), loadSeq = 0;
 
         $root.addClass("al15-picker").html(
             `<div class="al15-bar">
                 <select class="al15-area">${AREAS.map(a => `<option value="${a[0]}">${a[1]}</option>`).join("")}</select>
                 <select class="al15-port"></select>
-                <select class="al15-cat">${CATS.map(a => `<option value="${a[0]}">${a[1]}</option>`).join("")}</select>
+                <select class="al15-cat"></select>
             </div>
             <div class="al15-bar">
                 <input type="text" class="al15-q" placeholder="Filter by name or path">
@@ -134,7 +147,6 @@
         const $list = $root.find(".al15-list");
 
         $area.val(st.area);
-        $cat.val(st.cat);
         $det.prop("checked", !!st.details);
 
         /* ---------- selected list ---------- */
@@ -207,7 +219,7 @@
                 const item = index.get(p.path);
                 const port = p.port || portOf(p.path);
                 const w = $(`<div class="al15-sel">`).appendTo(row);
-                $(`<span class="al15-chip">`).text(port ? `Port ${port}` : (p.path.startsWith("/iolinkmaster") ? "Master" : "System")).appendTo(w);
+                $(`<span class="al15-chip">`).text(port ? `Port ${port}` : "Master").appendTo(w);
                 $(`<div class="al15-txt"><span class="al15-name"></span><span class="al15-sub"><span></span></span></div>`).appendTo(w)
                     .find(".al15-name").text(p.label || p.path.split("/").pop()).end()
                     .find(".al15-sub > span").text(p.path);
@@ -259,18 +271,43 @@
         }
         fillPorts();
 
+        /** expert view: complete data without category filter, full paths and attributes */
+        function isAll() { return $area.val() !== "status" && $cat.val() === "all"; }
+
+        /** true when `i` belongs to area / port / category (without text filter) */
+        function inView(i, area, port, cat) {
+            if (area === "port") return i.area === "port" && i.port === port && (cat === "all" || i.cat === cat);
+            if (area === "master") return i.area !== "port" && (cat === "all" || (i.area === "master" && i.cat === cat));
+            return i.area === area;
+        }
+        function usable(i, details) {
+            if (opts.mode === "write" ? !i.writable : !i.readable) return false;
+            return details || !i.nested;
+        }
+
         function filtered() {
             const area = $area.val(), port = Number($port.val()), cat = $cat.val();
             const q = $q.val().trim().toLowerCase().split(/\s+/).filter(Boolean);
-            const details = $det.is(":checked") || area === "advanced";
+            const details = $det.is(":checked") || isAll();
             return model.filter(i => {
-                if (opts.mode === "write" ? !i.writable : !i.readable) return false;
-                if (!details && i.nested) return false;
-                if (area === "port") { if (i.port !== port || (cat !== "all" && i.cat !== cat)) return false; }
-                else if (area !== "advanced" && i.area !== area) return false;
+                if (!usable(i, details) || !inView(i, area, port, cat)) return false;
                 if (q.length) { const hay = `${displayName(i)} ${i.path}`.toLowerCase(); return q.every(w => hay.includes(w)); }
                 return true;
             });
+        }
+
+        /** category list of the current area with the number of data points (empty ones greyed out) */
+        function fillCats() {
+            const area = $area.val(), list = CATS[area];
+            $cat.toggle(!!list);
+            if (!list) return;
+            const port = Number($port.val()), cur = $cat.val() || catOf[area];
+            $cat.html(list.map(c => {
+                const n = model.length ? model.filter(i => usable(i, c[0] === "all" || $det.is(":checked")) && inView(i, area, port, c[0])).length : null;
+                const grey = n === 0 ? ` style="color:var(--red-ui-secondary-text-color-disabled,#aaa)"` : "";
+                return `<option value="${c[0]}"${grey}>${c[1]}${n === null ? "" : ` (${n})`}</option>`;
+            }).join(""));
+            $cat.val(hasOpt(list, cur) ? cur : DEFAULT_CAT[area]);
         }
 
         function render() {
@@ -281,7 +318,7 @@
             $browser.empty();
             shown.forEach(i => {
                 const on = sel.has(i.path);
-                const sub = area === "advanced" || $q.val() ? i.path : (i.group || i.path);
+                const sub = isAll() || $q.val() ? i.path : (i.group || i.path);
                 const $r = $(`<div class="al15-row${on ? " al15-on" : ""}"><i class="fa ${on ? "fa-check-square" : "fa-plus"}"></i>
                     <div class="al15-txt"><span class="al15-name"></span><span class="al15-sub"><span></span></span></div></div>`).appendTo($browser);
                 $r.attr("title", `${i.path}\n${on ? "Click to remove" : "Click to add"}`);
@@ -295,22 +332,26 @@
             if (!all.length) {
                 const portCount = model.filter(i => i.port === Number($port.val())).length;
                 $browser.html(`<div class="al15-msg">No ${opts.mode === "write" ? "writable" : "readable"} data points for this selection.` +
-                    (area === "port" ? `<br>Port ${esc($port.val())} has ${portCount} data points in total – try another category or “All port data”.` : "") + `</div>`);
+                    (area === "port" ? `<br>Port ${esc($port.val())} has ${portCount} data points in total – try another category or “All Port Data”.` :
+                        area === "master" ? "<br>Not available with this firmware – try “Advanced (all)”." : "") + `</div>`);
             }
             $root.find(".al15-count").text(all.length > LIMIT ? `showing ${LIMIT} of ${all.length} – refine the filter` : `${all.length} shown`);
         }
 
         function persist() {
-            saveState({ area: $area.val(), port: Number($port.val()), cat: $cat.val(), details: $det.is(":checked") });
+            const area = $area.val();
+            if (CATS[area] && $cat.val()) catOf[area] = $cat.val();
+            saveState({ area, port: Number($port.val()), cat: catOf.port, mcat: catOf.master, details: $det.is(":checked") });
         }
         $area.on("change", function () {
-            const p = $(this).val() === "port";
-            $port.toggle(p); $cat.toggle(p);
-            persist(); render();
+            const area = $(this).val();
+            $port.toggle(area === "port");
+            $cat.val(null); // take the last category used in this area
+            fillCats(); persist(); render();
         }).trigger("change");
-        $port.on("change", () => { persist(); render(); });
+        $port.on("change", () => { fillCats(); persist(); render(); });
         $cat.on("change", () => { persist(); render(); });
-        $det.on("change", () => { persist(); render(); });
+        $det.on("change", () => { fillCats(); persist(); render(); });
         let qt = null;
         $q.on("input", () => { clearTimeout(qt); qt = setTimeout(render, 120); });
 
@@ -325,14 +366,13 @@
             if (!sel.length) return;
             const areas = new Set(sel.map(i => i.area));
             if (areas.size !== 1) return;
-            const area = sel[0].area;
+            const area = sel[0].area, cats = new Set(sel.map(i => i.cat));
             if (area === "port") {
-                const ports = new Set(sel.map(i => i.port)), cats = new Set(sel.map(i => i.cat));
-                if (ports.size !== 1) return;
+                if (new Set(sel.map(i => i.port)).size !== 1) return;
                 $port.val(String(sel[0].port));
-                $cat.val(cats.size === 1 ? sel[0].cat : "all");
-                if (sel.some(i => i.nested)) $det.prop("checked", true);
             }
+            if (CATS[area]) catOf[area] = cats.size === 1 && sel[0].cat ? sel[0].cat : "all";
+            if (sel.some(i => i.nested)) $det.prop("checked", true);
             $area.val(area);
         }
 

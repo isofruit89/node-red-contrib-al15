@@ -4,6 +4,7 @@ const assert = require("assert");
 const mock = require("./mock-iotcore");
 const Core = require("../lib/core");
 const { flattenTree, hasChanged, validateWrite } = require("../lib/model");
+const { categorize } = require("../lib/categories");
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -22,14 +23,69 @@ test("flattenTree categorises and flags nested attributes", async () => {
     assert.strictEqual(by(`${PD}/Temperature`).nested, false);
     assert.strictEqual(by(`${PD}/Temperature/unit`).nested, true);
     assert.strictEqual(by(`${PD}/Temperature/unit`).parent, "Temperature");
-    assert.strictEqual(by("/iolinkmaster/port[1]/mode").cat, "port");
+    assert.strictEqual(by(`${PD}/Temperature/unit`).cat, "pdin"); // attribute inherits the category
+    assert.strictEqual(by("/iolinkmaster/port[1]/mode").cat, "config");
     assert.strictEqual(by("/iolinkmaster/port[1]/mode").writable, true);
-    assert.strictEqual(by("/iolinkmaster/port[1]/iolinkdevice/serial").cat, "device");
+    assert.strictEqual(by("/iolinkmaster/port[1]/iolinkdevice/serial").cat, "ident");
+    assert.strictEqual(by("/iolinkmaster/port[1]/iolinkdevice/status").cat, "diag");
     assert.strictEqual(by("/iolinkmaster/port[1]/iolinkdevice/pdout").cat, "pdout");
-    assert.strictEqual(by("/iolinkmaster/voltage").area, "master");
-    assert.strictEqual(by("/deviceinfo/serialnumber").area, "system");
+    assert.deepStrictEqual([by("/iolinkmaster/voltage").area, by("/iolinkmaster/voltage").cat], ["master", null]);
+    assert.deepStrictEqual([by("/deviceinfo/serialnumber").area, by("/deviceinfo/serialnumber").cat], ["master", "ident"]);
     assert.ok(by(`${PD}/Temperature`).group.includes("Process_Data_Input_Output"));
     core.close();
+});
+
+test("categorize: mapping list (paths of a live AL1590, firmware 1.8.0.1)", () => {
+    const P = "/iolinkmaster/port[2]", D = `${P}/iolinkdevice`;
+    const exp = {
+        "/application/node-red/status": ["status", null],
+        "/connections/httpserver1/status": ["status", null],
+        "/fieldbussetup/connectionstatus": ["status", null],
+        "/application/avahi/status": ["master", null],                              // not in the list -> Advanced (all)
+        "/connections/mqttcommandchannel/mqttcmdchannel/status": ["master", null],
+        "/devicetag/locationtag": ["master", "tags"],
+        "/deviceinfo/serialnumber": ["master", "ident"],
+        "/deviceinfo/fieldbustype": ["master", null],
+        "/network/br0/macaddress": ["master", "ident"],
+        "/software/firmware/version": ["master", "ident"],
+        "/devicestatus/temperature/power5V": ["master", "data"],
+        "/devicestatus/temperature/POWER5V": ["master", "data"],                  // case-insensitive
+        "/processdatamaster/supervisionstatus_ua": ["master", "data"],
+        "/fieldbussetup/fieldbustype": ["master", "data"],
+        "/iolinkmaster/masterid": ["master", null],
+        "/fieldbussetup/configuration/port[2]/failsafeiolink": ["master", null],  // not a port of /iolinkmaster
+        "/iolinkmaster/port[5]/iqin": ["port", "pdin"],
+        [`${D}/pdin`]: ["port", "pdin"],
+        [`${D}/pdin_interpreted/Process_Data_Input_Output/Crest`]: ["port", "pdin"],
+        "/iolinkmaster/port[1]/iqout": ["port", "pdout"],
+        [`${D}/pdout`]: ["port", "pdout"],
+        [`${D}/pdout_interpreted/Process_Data_Input_Output/Revolution`]: ["port", "pdout"],
+        [`${P}/portevent`]: ["port", "diag"],
+        [`${P}/porteventlist`]: ["port", "diag"],
+        [`${D}/iolinkevent`]: ["port", "diag"],
+        [`${D}/iolinkeventlist`]: ["port", "diag"],
+        [`${D}/status`]: ["port", "diag"],
+        [`${D}/diagnosis_interpreted/Diagnosis/Device_Status`]: ["port", "diag"],
+        [`${D}/identification_interpreted/Serial_Number`]: ["port", "ident"],
+        [`${D}/vendorid`]: ["port", "ident"],
+        [`${D}/deviceid`]: ["port", "ident"],
+        [`${D}/applicationspecifictag`]: ["port", "ident"],
+        [`${D}/parameter_interpreted/Basic_settings/uni_T`]: ["port", "param"],
+        [`${D}/observation_interpreted/PD_Input/OUT1`]: ["port", null],            // only in All Port Data
+        [`${P}/mode`]: ["port", "config"],
+        [`${P}/comspeed`]: ["port", "config"],
+        [`${P}/mastercycletime_actual`]: ["port", "config"],
+        [`${P}/datastorage/size`]: ["port", "config"],
+        [`${P}/validation_deviceid`]: ["port", "config"],
+        [`${P}/powercontrol/mode_ua`]: ["port", "config"],
+        "/somefuture/branch": ["master", null],                                    // unknown -> Advanced (all)
+        [`${D}/somefuture_interpreted/x`]: ["port", null]
+    };
+    for (const [p, [area, cat]] of Object.entries(exp)) {
+        const c = categorize(p);
+        assert.deepStrictEqual([c.area, c.cat], [area, cat], p);
+        assert.strictEqual(c.port, area === "port" ? Number(p.match(/port\[(\d+)\]/)[1]) : null, p);
+    }
 });
 
 test("hasChanged: deadband and deterministic compare", () => {

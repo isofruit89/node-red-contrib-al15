@@ -14,7 +14,7 @@ No npm dependencies – the package works fully offline.
 
 ## Installation (offline)
 
-The ready-to-install package is in [`dist/`](dist/): **[node-red-contrib-al15-0.4.0.tgz](dist/node-red-contrib-al15-0.4.0.tgz)**.
+The ready-to-install package is in [`dist/`](dist/): **[node-red-contrib-al15-0.5.0.tgz](dist/node-red-contrib-al15-0.5.0.tgz)**.
 No internet access is needed on the AL15.
 
 1. Download the `.tgz` file.
@@ -37,12 +37,29 @@ Example flow: *Import → Examples → node-red-contrib-al15 → AL15-basics*.
 
 The editor reads the IoT-Core model (`/gettree`) dynamically – no static list is needed.
 
-1. Choose the area: **Data per Port** (with port and category), **IO-Link Master Data**, **System Data** or **Advanced** (everything, full paths).
+1. Choose the area and category:
+   * **IO-Link Master Status** – status of Node-RED, NTP, MQTT, OPC UA, HTTP servers, monitor and fieldbus connection.
+   * **IO-Link Master Data** – *AL15 Tags*, *AL15 Ident*, *AL15 Data* or *Advanced (all)* (every data point outside the ports, full paths).
+   * **Data on Ports** – port 1…n and *Process Data IN*, *Process Data OUT*, *Device Status / Diagnosis*,
+     *Device Identification*, *Parameter*, *Port Configuration* or *All Port Data*.
+
+   The number behind each category is the number of data points the AL15 offers there; empty categories are greyed out.
 2. Optionally filter by name or path (several words = AND).
 3. Click a data point to add it, click again to remove it. Selected points are highlighted.
 4. Give every point a name (`msg.name`). Duplicate or empty names are marked red.
 
 Attributes such as `unit` or `iodd_info` below a process value are hidden unless **Details** is ticked.
+
+### Categories – generic across firmware versions
+
+The categories are a rule table in [`lib/categories.js`](lib/categories.js) (`port[x]` = any port,
+`/#` = the path and everything below it, first match wins). It only *sorts* what the live `/gettree` returns:
+
+* data points that a firmware does not have are simply not shown (e.g. `iqin` only on ports with an IQ input),
+* data points that no rule matches are never lost – they appear in **Advanced (all)** or **All Port Data**
+  (e.g. `observation_interpreted` of newer firmware, which repeats the interpreted process data),
+* *Device Identification* also lists the raw fields (`vendorid`, `deviceid`, `productname`, `serial` …),
+  so it is filled without IODD; `*_interpreted` branches need an IODD on the AL15.
 Use the refresh button after changing devices, IODDs or firmware. The model can be loaded before the
 config node is deployed.
 

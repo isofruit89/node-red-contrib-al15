@@ -51,7 +51,7 @@ RED.nodes.registerType("al15-input", {
     <p>Sends IoT-Core values of the AL15 when they <b>change</b>.</p>
     <p>The first successful read only initialises the cache and the comparison value – no message is sent for it.</p>
     <h3>Data points</h3>
-    <p>Choose a category (Data per Port, IO-Link Master Data, System Data, Advanced) and click data points to add them.
+    <p>Choose an area and category (IO-Link Master Status, IO-Link Master Data, Data on Ports) and click data points to add them.
        Each value gets a free name (<code>msg.name</code>), a polling interval and an optional deadband.</p>
     <dl class="message-properties">
         <dt>Interval <span class="property-type">ms</span></dt><dd>Polling interval in milliseconds, any value of at least 20 ms (default 500 ms).

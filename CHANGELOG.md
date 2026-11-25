@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0
+
+* **New picker categories** following the AL15 mapping list:
+  * **IO-Link Master Status** – status of Node-RED, NTP, MQTT client / command channel, OPC UA, HTTP servers, monitor, fieldbus connection.
+  * **IO-Link Master Data** – *AL15 Tags*, *AL15 Ident*, *AL15 Data* and *Advanced (all)* (everything outside the ports, replaces *System Data* / *Advanced*).
+  * **Data on Ports** – *Process Data IN* (incl. `iqin`), *Process Data OUT* (incl. `iqout`), *Device Status / Diagnosis*
+    (`portevent(list)`, `iolinkevent(list)`, device `status`, `diagnosis_interpreted`), *Device Identification*
+    (raw fields + `identification_interpreted`), *Parameter*, *Port Configuration*, *All Port Data*.
+* Categories are a rule table (`lib/categories.js`, notation `port[x]` and `/#`) applied to the live model –
+  unknown paths of older / newer firmware land in *Advanced (all)* or *All Port Data*. `observation_interpreted` is only listed in *All Port Data*.
+* Attributes (`unit`, `iodd_info` …) inherit the category of their data point.
+* Category list shows the number of data points per category; empty categories are greyed out.
+* Fixed: `portevent` was listed under *Port configuration* and `iolinkevent` under *Device*.
+* Stored picker views of 0.4.x are mapped to the new areas; selected data points of existing nodes are unchanged.
+
 ## 0.4.1
 
 * **AL15 out: payload example in the editor.** Below the selected targets the dialog shows an example `msg.payload`
